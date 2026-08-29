@@ -29,6 +29,11 @@
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
+        <!-- Never a real key - PaymentService is always mocked/faked in
+             tests that exercise payment, so no real Stripe network call
+             ever happens. This only satisfies the "is Stripe configured at
+             all" guard so unrelated tests aren't blocked by it. -->
+        <env name="STRIPE_SECRET" value="sk_test_fake_for_testing_only"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
