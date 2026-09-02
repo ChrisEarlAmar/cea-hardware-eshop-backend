@@ -39,12 +39,7 @@ class OrderController extends Controller
                 'status' => $order->status,
                 'payment_status' => $order->payment_status,
                 'total' => $order->total,
-                'customer' => [
-                    'id' => $order->user->id,
-                    'name' => $order->user->name,
-                    'email' => $order->user->email,
-                    'account_id' => $order->user->account_id,
-                ],
+                'customer' => $this->customerPayload($order),
                 'created_at' => $order->created_at->toIso8601String(),
             ]),
             meta: [
@@ -54,5 +49,63 @@ class OrderController extends Controller
                 'last_page' => $paginator->lastPage(),
             ],
         );
+    }
+
+    /**
+     * A single order's full detail for the staff order-detail page -
+     * deliberately not scoped to any account, the same cross-account
+     * visibility as index() above. Added alongside the tracking-update
+     * endpoint (see App\Http\Controllers\Api\Admin\ShipmentController) so
+     * that page has something to render before submitting the tracking
+     * form.
+     */
+    public function show(Order $order): JsonResponse
+    {
+        $order->load(['user:id,name,email,account_id', 'items']);
+
+        return ApiResponse::success([
+            'id' => $order->id,
+            'status' => $order->status,
+            'payment_status' => $order->payment_status,
+            'total' => $order->total,
+            'discount_total' => $order->discount_total,
+            'tracking_carrier' => $order->tracking_carrier,
+            'tracking_number' => $order->tracking_number,
+            'customer' => $this->customerPayload($order),
+            'items' => $order->items->map(fn ($item) => [
+                'id' => $item->id,
+                'sku' => $item->sku,
+                'quantity' => $item->quantity,
+                'unit_price' => $item->unit_price,
+                'line_total' => $item->line_total,
+            ]),
+            'created_at' => $order->created_at->toIso8601String(),
+        ]);
+    }
+
+    /**
+     * A guest order has no `user` row at all - `user_id` is nullable since
+     * guest checkout was added - so this can't unconditionally reach into
+     * $order->user the way an authenticated-only order model could.
+     */
+    private function customerPayload(Order $order): array
+    {
+        if ($order->user === null) {
+            return [
+                'id' => null,
+                'name' => $order->guest_name,
+                'email' => $order->guest_email,
+                'account_id' => null,
+                'guest' => true,
+            ];
+        }
+
+        return [
+            'id' => $order->user->id,
+            'name' => $order->user->name,
+            'email' => $order->user->email,
+            'account_id' => $order->user->account_id,
+            'guest' => false,
+        ];
     }
 }
