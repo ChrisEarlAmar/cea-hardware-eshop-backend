@@ -4,6 +4,8 @@ namespace Database\Seeders;
 
 use App\Models\Account;
 use App\Models\AccountPrice;
+use App\Models\Address;
+use App\Models\Coupon;
 use App\Models\ProductVariant;
 use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
@@ -51,5 +53,45 @@ class DatabaseSeeder extends Seeder
                 'unit_price' => '0.25',
             ]);
         }
+
+        Address::create([
+            'user_id' => $testUser->id,
+            'account_id' => $demoAccount->id,
+            'label' => 'Warehouse',
+            'recipient_name' => 'Test User',
+            'line1' => '500 Industrial Pkwy',
+            'city' => 'Springfield',
+            'state' => 'IL',
+            'postal_code' => '62701',
+            'country' => 'US',
+            'is_default' => true,
+        ]);
+
+        // A capped member on the demo account, so the B2B spending-limit
+        // approval flow (OrderApprovalController) has someone real to check
+        // out as: any order this user places over $50 lands in
+        // pending_approval for Test User (the account owner) to decide.
+        User::factory()->create([
+            'name' => 'Capped Buyer',
+            'email' => 'buyer@example.com',
+            'account_id' => $demoAccount->id,
+            'role' => 'member',
+            'spending_limit_cents' => 5000,
+        ]);
+
+        Coupon::create([
+            'code' => 'WELCOME10',
+            'type' => Coupon::TYPE_PERCENT,
+            'value' => '10.00',
+            'active' => true,
+        ]);
+
+        Coupon::create([
+            'code' => 'SAVE5',
+            'type' => Coupon::TYPE_FIXED,
+            'value' => '5.00',
+            'min_order_total' => '25.00',
+            'active' => true,
+        ]);
     }
 }
