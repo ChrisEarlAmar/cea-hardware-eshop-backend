@@ -32,6 +32,21 @@ class Product extends Model
         return $this->hasMany(ProductImage::class)->orderBy('sort_order');
     }
 
+    public function reviews(): HasMany
+    {
+        return $this->hasMany(Review::class);
+    }
+
+    public function approvedReviews(): HasMany
+    {
+        return $this->hasMany(Review::class)->where('status', Review::STATUS_APPROVED);
+    }
+
+    public function wishlistedBy(): HasMany
+    {
+        return $this->hasMany(WishlistItem::class);
+    }
+
     /**
      * Adds a `starting_price` column: the lowest base-tier (min_quantity=1)
      * unit price across this product's variants, via a correlated

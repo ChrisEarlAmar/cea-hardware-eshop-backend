@@ -30,6 +30,8 @@ class User extends Authenticatable
         'is_staff',
         'failed_login_attempts',
         'locked_until',
+        'spending_limit_cents',
+        'deletion_requested_at',
     ];
 
     /**
@@ -56,6 +58,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'is_staff' => 'boolean',
             'locked_until' => 'datetime',
+            'deletion_requested_at' => 'datetime',
         ];
     }
 
@@ -67,6 +70,21 @@ class User extends Authenticatable
     public function orders(): HasMany
     {
         return $this->hasMany(Order::class);
+    }
+
+    public function addresses(): HasMany
+    {
+        return $this->hasMany(Address::class);
+    }
+
+    public function wishlistItems(): HasMany
+    {
+        return $this->hasMany(WishlistItem::class);
+    }
+
+    public function reviews(): HasMany
+    {
+        return $this->hasMany(Review::class);
     }
 
     public function isLocked(): bool

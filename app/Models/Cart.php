@@ -10,6 +10,7 @@ class Cart extends Model
 {
     protected $fillable = [
         'user_id',
+        'guest_token',
     ];
 
     public function user(): BelongsTo

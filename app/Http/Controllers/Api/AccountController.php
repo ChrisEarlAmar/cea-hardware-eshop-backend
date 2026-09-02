@@ -102,4 +102,38 @@ class AccountController extends Controller
 
         return ApiResponse::success(['message' => 'Member removed.']);
     }
+
+    /**
+     * Cap how much a member can spend on a single order before it requires
+     * the owner's approval - see OrderService::createFromCart and
+     * OrderApprovalController. Null means no cap, the default for every
+     * member until an owner deliberately sets one.
+     */
+    public function updateMemberSpendingLimit(Request $request, User $targetUser): JsonResponse
+    {
+        $user = $request->user();
+
+        if ($user->account_id === null || $targetUser->account_id !== $user->account_id) {
+            abort(404);
+        }
+
+        Gate::authorize('manageMembers', $user->account);
+
+        if ($targetUser->is($user)) {
+            throw ValidationException::withMessages([
+                'user' => ['You cannot set your own spending limit.'],
+            ]);
+        }
+
+        $validated = $request->validate([
+            'spending_limit_cents' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $targetUser->update(['spending_limit_cents' => $validated['spending_limit_cents'] ?? null]);
+
+        return ApiResponse::success([
+            'message' => 'Spending limit updated.',
+            'spending_limit_cents' => $targetUser->spending_limit_cents,
+        ]);
+    }
 }

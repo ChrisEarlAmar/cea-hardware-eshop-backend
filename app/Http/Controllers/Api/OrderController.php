@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api;
 
 use App\Exceptions\InsufficientStockException;
 use App\Exceptions\InvalidOrderTransitionException;
+use App\Exceptions\PaymentStartFailedException;
 use App\Http\Controllers\Controller;
+use App\Models\Address;
 use App\Models\Cart;
 use App\Models\IdempotencyKey;
 use App\Models\Order;
@@ -15,6 +17,7 @@ use App\Support\ApiResponse;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use InvalidArgumentException;
 
 class OrderController extends Controller
 {
@@ -67,10 +70,30 @@ class OrderController extends Controller
             );
         }
 
+        $validated = $request->validate([
+            'shipping_address_id' => ['nullable', 'integer'],
+            'billing_address_id' => ['nullable', 'integer'],
+            'coupon_code' => ['nullable', 'string', 'max:64'],
+            'customer_note' => ['nullable', 'string', 'max:1000'],
+            'po_reference' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        try {
+            $extras = [
+                'shipping_address_id' => $this->resolveOwnedAddressId($user, $validated['shipping_address_id'] ?? null),
+                'billing_address_id' => $this->resolveOwnedAddressId($user, $validated['billing_address_id'] ?? null),
+                'customer_note' => $validated['customer_note'] ?? null,
+                'po_reference' => $validated['po_reference'] ?? null,
+                'coupon_code' => $validated['coupon_code'] ?? null,
+            ];
+        } catch (InvalidArgumentException $e) {
+            return ApiResponse::error('invalid_address', $e->getMessage(), 422);
+        }
+
         $cart = Cart::firstOrCreate(['user_id' => $user->id]);
         $cart->load('items.variant');
 
-        $fingerprint = $this->fingerprintCart($cart);
+        $fingerprint = $this->fingerprintRequest($cart, $extras);
 
         $existing = IdempotencyKey::where('key', $idempotencyKey)->where('user_id', $user->id)->first();
 
@@ -128,11 +151,42 @@ class OrderController extends Controller
             );
         }
 
-        [$status, $body] = $this->checkout($cart, $user);
+        [$status, $body] = $this->checkout($cart, $user, $extras);
 
         $idempotencyRecord->update(['response_status' => $status, 'response_body' => $body]);
 
         return response()->json($body, $status);
+    }
+
+    /**
+     * Starts payment for an order that was held in STATUS_PENDING_APPROVAL
+     * and has since been approved by the account owner - the B2B mirror of
+     * the payment step normal checkout starts automatically. Deliberately a
+     * separate, buyer-initiated call rather than something the approval
+     * itself triggers: the client_secret it returns is only useful to the
+     * browser session that's about to enter card details, which is never
+     * the approving owner's request.
+     */
+    public function startPayment(Request $request, Order $order): JsonResponse
+    {
+        if ($order->user_id !== $request->user()->id) {
+            abort(404);
+        }
+
+        if ($order->status !== Order::STATUS_AWAITING_PAYMENT || $order->payment_intent_id !== null) {
+            return ApiResponse::error('cannot_start_payment', 'Payment cannot be started for this order.', 422);
+        }
+
+        try {
+            $intent = $this->orderService->startPayment($order);
+        } catch (PaymentStartFailedException $e) {
+            return ApiResponse::error('payment_intent_failed', $e->getMessage(), 502);
+        }
+
+        return ApiResponse::success([
+            ...$this->orderPayload($order->fresh('items')),
+            'client_secret' => $intent['client_secret'],
+        ]);
     }
 
     public function updateStatus(Request $request, Order $order): JsonResponse
@@ -172,35 +226,31 @@ class OrderController extends Controller
     }
 
     /**
+     * @param  array<string, mixed>  $extras
      * @return array{0: int, 1: array}
      */
-    private function checkout(Cart $cart, User $user): array
+    private function checkout(Cart $cart, User $user, array $extras = []): array
     {
         try {
-            $order = $this->orderService->createFromCart($cart);
+            $order = $this->orderService->createFromCart($cart, $extras);
         } catch (InsufficientStockException $e) {
             return [422, ['error' => ['code' => 'insufficient_stock', 'message' => $e->getMessage()]]];
+        } catch (InvalidArgumentException $e) {
+            return [422, ['error' => ['code' => 'invalid_checkout', 'message' => $e->getMessage()]]];
+        }
+
+        // A B2B order over the buyer's spending limit is held for the
+        // account owner to approve - payment is never started for it here,
+        // see OrderService::createFromCart and OrderApprovalController.
+        if ($order->status === Order::STATUS_PENDING_APPROVAL) {
+            return [201, ['data' => $this->orderPayload($order->fresh('items'))]];
         }
 
         try {
-            $intent = $this->paymentService->createPaymentIntentFor($order);
-        } catch (\Throwable $e) {
-            // Stock was already reserved by createFromCart above, but there
-            // is now no way to pay for this order - release the
-            // reservation immediately rather than leaving it locked.
-            $this->orderService->transitionTo($order, Order::STATUS_CANCELLED, $user, 'Payment could not be started.');
-            report($e);
-
-            return [502, ['error' => [
-                'code' => 'payment_intent_failed',
-                'message' => 'Could not start payment for this order. No charge was made; please try again.',
-            ]]];
+            $intent = $this->orderService->startPayment($order);
+        } catch (PaymentStartFailedException $e) {
+            return [502, ['error' => ['code' => 'payment_intent_failed', 'message' => $e->getMessage()]]];
         }
-
-        $order->update([
-            'payment_intent_id' => $intent['id'],
-            'payment_status' => Order::PAYMENT_REQUIRES_PAYMENT,
-        ]);
 
         return [201, ['data' => [
             ...$this->orderPayload($order->fresh('items')),
@@ -208,7 +258,30 @@ class OrderController extends Controller
         ]]];
     }
 
-    private function fingerprintCart(Cart $cart): string
+    private function resolveOwnedAddressId(User $user, ?int $addressId): ?int
+    {
+        if ($addressId === null) {
+            return null;
+        }
+
+        $address = Address::find($addressId);
+
+        $owned = $address !== null && (
+            $address->user_id === $user->id
+            || ($address->account_id !== null && $address->account_id === $user->account_id)
+        );
+
+        if (! $owned) {
+            throw new InvalidArgumentException('Invalid address selected.');
+        }
+
+        return $addressId;
+    }
+
+    /**
+     * @param  array<string, mixed>  $extras
+     */
+    private function fingerprintRequest(Cart $cart, array $extras): string
     {
         $lines = $cart->items
             ->map(fn ($item) => "{$item->product_variant_id}:{$item->quantity}")
@@ -216,7 +289,18 @@ class OrderController extends Controller
             ->values()
             ->implode('|');
 
-        return hash('sha256', $lines);
+        // Only fold extras into the fingerprint when any were actually
+        // supplied, so a plain checkout (no address/coupon/note) hashes
+        // identically to before these fields existed.
+        $meaningfulExtras = array_filter($extras, fn ($value) => $value !== null);
+
+        if (empty($meaningfulExtras)) {
+            return hash('sha256', $lines);
+        }
+
+        ksort($meaningfulExtras);
+
+        return hash('sha256', $lines.'::'.json_encode($meaningfulExtras));
     }
 
     private function orderPayload(Order $order, bool $includePaymentSecret = false): array
@@ -226,7 +310,15 @@ class OrderController extends Controller
             'status' => $order->status,
             'payment_status' => $order->payment_status,
             'total' => $order->total,
+            'discount_total' => $order->discount_total,
+            'po_reference' => $order->po_reference,
+            'customer_note' => $order->customer_note,
+            'tracking_carrier' => $order->tracking_carrier,
+            'tracking_number' => $order->tracking_number,
+            'shipping_address_id' => $order->shipping_address_id,
+            'billing_address_id' => $order->billing_address_id,
             'items' => $order->items->map(fn ($item) => [
+                'id' => $item->id,
                 'sku' => $item->sku,
                 'quantity' => $item->quantity,
                 'unit_price' => $item->unit_price,
