@@ -38,4 +38,9 @@ class ProductVariant extends Model
     {
         return $this->hasMany(StockAdjustment::class)->latest('id');
     }
+
+    public function stockNotifications(): HasMany
+    {
+        return $this->hasMany(StockNotification::class);
+    }
 }

@@ -5,8 +5,10 @@ namespace App\Services;
 use App\Exceptions\InvalidOrderTransitionException;
 use App\Exceptions\PaymentStartFailedException;
 use App\Mail\OrderConfirmationMail;
+use App\Models\Address;
 use App\Models\Cart;
 use App\Models\Coupon;
+use App\Models\GiftCard;
 use App\Models\Order;
 use App\Models\OrderApproval;
 use App\Models\User;
@@ -24,6 +26,9 @@ class OrderService
         private readonly PricingEngine $pricingEngine,
         private readonly PaymentService $paymentService,
         private readonly CouponService $couponService,
+        private readonly GiftCardService $giftCardService,
+        private readonly LoyaltyService $loyaltyService,
+        private readonly TaxService $taxService,
     ) {
     }
 
@@ -45,6 +50,16 @@ class OrderService
      *   - guest_email, guest_name: string|null (only for a cart with no user)
      *   - customer_note, po_reference: string|null
      *   - coupon_code: string|null
+     *   - gift_card_code: string|null (a guest can redeem one too, unlike
+     *     loyalty points, since a gift card is a code, not an account)
+     *   - redeem_loyalty_points: int|null (signed-in users only; capped to
+     *     both the buyer's balance and what the order still owes)
+     *
+     * Money flows through the pipeline in this fixed order: subtotal ->
+     * coupon discount -> loyalty-points discount -> tax (charged on what's
+     * left after those two real discounts) -> gift card, applied last since
+     * it behaves like a payment instrument rather than a discount - most
+     * real storefronts don't let a gift card reduce the taxable base either.
      *
      * The order normally starts life awaiting payment, not pending - stock
      * is reserved immediately (so nobody else can buy the last unit while
@@ -73,6 +88,15 @@ class OrderService
                 }
             }
 
+            $giftCard = null;
+            if (! empty($extras['gift_card_code'])) {
+                $giftCard = GiftCard::where('code', $extras['gift_card_code'])->first();
+
+                if ($giftCard === null || ! $giftCard->isUsable()) {
+                    throw new InvalidArgumentException('This gift card code is not valid.');
+                }
+            }
+
             $order = Order::create([
                 'user_id' => $cart->user_id,
                 'status' => Order::STATUS_AWAITING_PAYMENT,
@@ -85,6 +109,7 @@ class OrderService
                 'customer_note' => $extras['customer_note'] ?? null,
                 'po_reference' => $extras['po_reference'] ?? null,
                 'coupon_id' => $coupon?->id,
+                'gift_card_id' => $giftCard?->id,
             ]);
 
             $subtotalCents = 0;
@@ -105,7 +130,7 @@ class OrderService
                 $subtotalCents += $this->toCents($priced['line_total']);
             }
 
-            $discountCents = 0;
+            $couponDiscountCents = 0;
 
             if ($coupon !== null) {
                 $subtotal = $this->toDecimalString($subtotalCents);
@@ -114,11 +139,57 @@ class OrderService
                     throw new InvalidArgumentException("This coupon requires a minimum order of {$coupon->min_order_total}.");
                 }
 
-                $discountCents = $this->toCents($this->couponService->discountFor($coupon, $subtotal));
+                $couponDiscountCents = $this->toCents($this->couponService->discountFor($coupon, $subtotal));
+            }
+
+            $afterCouponCents = max(0, $subtotalCents - $couponDiscountCents);
+
+            // Loyalty points are only ever a signed-in perk - a guest has no
+            // balance to spend from.
+            $loyaltyPointsToRedeem = 0;
+            $loyaltyDiscountCents = 0;
+
+            if ($user !== null && ! empty($extras['redeem_loyalty_points'])) {
+                $loyaltyPointsToRedeem = $this->loyaltyService->pointsToRedeem(
+                    (int) $extras['redeem_loyalty_points'],
+                    $user->loyalty_points_balance,
+                    $this->toDecimalString($afterCouponCents),
+                );
+                $loyaltyDiscountCents = $this->toCents($this->loyaltyService->discountForPoints($loyaltyPointsToRedeem));
+            }
+
+            $taxableCents = max(0, $afterCouponCents - $loyaltyDiscountCents);
+
+            $shippingAddress = $extras['shipping_address_id'] ?? null
+                ? Address::find($extras['shipping_address_id'])
+                : null;
+            $taxCents = $this->toCents($this->taxService->taxFor($shippingAddress?->state, $this->toDecimalString($taxableCents)));
+
+            $beforeGiftCardCents = $taxableCents + $taxCents;
+
+            $giftCardAmountCents = 0;
+            if ($giftCard !== null) {
+                $giftCardAmountCents = $this->toCents($this->giftCardService->amountToApply($giftCard, $this->toDecimalString($beforeGiftCardCents)));
+            }
+
+            $totalCents = max(0, $beforeGiftCardCents - $giftCardAmountCents);
+
+            // Every redemption is applied now, inside this transaction, so a
+            // later failure (insufficient stock further down an earlier
+            // loop iteration would have already thrown) rolls it back along
+            // with everything else - never charged for real until payment
+            // succeeds, but reserved immediately the same way stock is.
+            if ($coupon !== null) {
                 $this->couponService->redeem($coupon);
             }
 
-            $totalCents = max(0, $subtotalCents - $discountCents);
+            if ($giftCard !== null && $giftCardAmountCents > 0) {
+                $this->giftCardService->redeem($giftCard, $this->toDecimalString($giftCardAmountCents));
+            }
+
+            if ($loyaltyPointsToRedeem > 0) {
+                $user->decrement('loyalty_points_balance', $loyaltyPointsToRedeem);
+            }
 
             $status = Order::STATUS_AWAITING_PAYMENT;
 
@@ -128,7 +199,11 @@ class OrderService
 
             $order->update([
                 'total' => $this->toDecimalString($totalCents),
-                'discount_total' => $this->toDecimalString($discountCents),
+                'discount_total' => $this->toDecimalString($couponDiscountCents + $loyaltyDiscountCents),
+                'tax_total' => $this->toDecimalString($taxCents),
+                'gift_card_amount' => $this->toDecimalString($giftCardAmountCents),
+                'loyalty_points_redeemed' => $loyaltyPointsToRedeem,
+                'loyalty_points_earned' => $this->loyaltyService->pointsEarnedFor($this->toDecimalString($taxableCents)),
                 'status' => $status,
             ]);
 
@@ -187,9 +262,14 @@ class OrderService
      * Applies a state transition if - and only if - the order's current
      * status allows it (see Order::canTransitionTo). Cancelling restores
      * the stock that was decremented at checkout, since the goods haven't
-     * shipped yet; that restoration is part of the same transaction as the
-     * status change. Every transition - including this one - is appended to
-     * the order's status history, never just overwriting the current status.
+     * shipped yet, and refunds any gift-card amount or loyalty points that
+     * were redeemed at checkout, for the same reason - none of it was ever
+     * actually charged. There's nothing to reverse for loyalty points
+     * *earned*, since those are only ever credited once payment succeeds
+     * (see below), never at creation time. All of that restoration is part
+     * of the same transaction as the status change. Every transition -
+     * including this one - is appended to the order's status history, never
+     * just overwriting the current status.
      *
      * Notifications are dispatched only after the transaction commits, not
      * from inside it - queuing a job/notification before the row it
@@ -216,6 +296,22 @@ class OrderService
                         ->where('id', $item->product_variant_id)
                         ->increment('stock', $item->quantity);
                 }
+
+                if ($order->gift_card_id !== null && (float) $order->gift_card_amount > 0) {
+                    $this->giftCardService->refund($order->giftCard, (string) $order->gift_card_amount);
+                }
+
+                if ($order->loyalty_points_redeemed > 0 && $order->user !== null) {
+                    $order->user->increment('loyalty_points_balance', $order->loyalty_points_redeemed);
+                }
+            }
+
+            // Points are only ever credited once payment actually clears -
+            // never at checkout time, since an order that's never paid for
+            // shouldn't earn anything.
+            if ($fromStatus === Order::STATUS_AWAITING_PAYMENT && $newStatus === Order::STATUS_PENDING
+                && $order->loyalty_points_earned > 0 && $order->user !== null) {
+                $order->user->increment('loyalty_points_balance', $order->loyalty_points_earned);
             }
 
             $order->update(['status' => $newStatus]);

@@ -72,6 +72,7 @@ class GuestOrderController extends Controller
             'guest_name' => ['required', 'string', 'max:255'],
             'customer_note' => ['nullable', 'string', 'max:1000'],
             'coupon_code' => ['nullable', 'string', 'max:64'],
+            'gift_card_code' => ['nullable', 'string', 'max:64'],
             'shipping_address' => ['required', 'array'],
             'shipping_address.recipient_name' => ['required', 'string', 'max:255'],
             'shipping_address.line1' => ['required', 'string', 'max:255'],
@@ -180,6 +181,7 @@ class GuestOrderController extends Controller
             'guest_name' => $validated['guest_name'],
             'customer_note' => $validated['customer_note'] ?? null,
             'coupon_code' => $validated['coupon_code'] ?? null,
+            'gift_card_code' => $validated['gift_card_code'] ?? null,
             'shipping_address_id' => $address->id,
             'billing_address_id' => $address->id,
         ];
@@ -230,6 +232,7 @@ class GuestOrderController extends Controller
             'guest_name' => $validated['guest_name'],
             'customer_note' => $validated['customer_note'] ?? null,
             'coupon_code' => $validated['coupon_code'] ?? null,
+            'gift_card_code' => $validated['gift_card_code'] ?? null,
             'shipping_address' => [
                 'recipient_name' => $shipping['recipient_name'],
                 'line1' => $shipping['line1'],
@@ -253,6 +256,8 @@ class GuestOrderController extends Controller
             'payment_status' => $order->payment_status,
             'total' => $order->total,
             'discount_total' => $order->discount_total,
+            'tax_total' => $order->tax_total,
+            'gift_card_amount' => $order->gift_card_amount,
             'guest_email' => $order->guest_email,
             'guest_name' => $order->guest_name,
             'tracking_carrier' => $order->tracking_carrier,

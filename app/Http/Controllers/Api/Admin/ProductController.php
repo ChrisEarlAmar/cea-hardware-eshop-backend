@@ -73,6 +73,9 @@ class ProductController extends Controller
             'slug' => ['sometimes', 'string', 'max:255', 'alpha_dash', 'unique:products,slug'],
             'description' => ['nullable', 'string'],
             'image_url' => ['nullable', 'string', 'max:2048'],
+            'is_featured' => ['sometimes', 'boolean'],
+            'sale_discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'sale_ends_at' => ['nullable', 'date'],
         ]);
 
         $product = Product::create([
@@ -81,6 +84,9 @@ class ProductController extends Controller
             'slug' => $validated['slug'] ?? $this->uniqueSlug($validated['name']),
             'description' => $validated['description'] ?? null,
             'image_url' => $validated['image_url'] ?? null,
+            'is_featured' => $validated['is_featured'] ?? false,
+            'sale_discount_percent' => $validated['sale_discount_percent'] ?? null,
+            'sale_ends_at' => $validated['sale_ends_at'] ?? null,
         ]);
 
         $this->auditLogger->log($request->user(), 'product.create', $product, ['name' => $product->name]);
@@ -99,6 +105,9 @@ class ProductController extends Controller
             ],
             'description' => ['nullable', 'string'],
             'image_url' => ['nullable', 'string', 'max:2048'],
+            'is_featured' => ['sometimes', 'boolean'],
+            'sale_discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'sale_ends_at' => ['nullable', 'date'],
         ]);
 
         $product->update($validated);
@@ -159,6 +168,9 @@ class ProductController extends Controller
             'slug' => $product->slug,
             'description' => $product->description,
             'image_url' => $product->image_url,
+            'is_featured' => (bool) $product->is_featured,
+            'sale_discount_percent' => $product->sale_discount_percent,
+            'sale_ends_at' => $product->sale_ends_at?->toIso8601String(),
             'category' => $product->relationLoaded('category') && $product->category ? [
                 'id' => $product->category->id,
                 'name' => $product->category->name,

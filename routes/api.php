@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\Admin\AuditLogController as AdminAuditLogController
 use App\Http\Controllers\Api\Admin\CategoryController as AdminCategoryController;
 use App\Http\Controllers\Api\Admin\CouponController as AdminCouponController;
 use App\Http\Controllers\Api\Admin\DeletionRequestController as AdminDeletionRequestController;
+use App\Http\Controllers\Api\Admin\GiftCardController as AdminGiftCardController;
 use App\Http\Controllers\Api\Admin\OrderController as AdminOrderController;
 use App\Http\Controllers\Api\Admin\PriceTierController as AdminPriceTierController;
 use App\Http\Controllers\Api\Admin\ProductController as AdminProductController;
@@ -14,10 +15,13 @@ use App\Http\Controllers\Api\Admin\ReturnController as AdminReturnController;
 use App\Http\Controllers\Api\Admin\ReviewController as AdminReviewController;
 use App\Http\Controllers\Api\Admin\RfqController as AdminRfqController;
 use App\Http\Controllers\Api\Admin\ShipmentController;
+use App\Http\Controllers\Api\Admin\ProductQuestionController as AdminProductQuestionController;
 use App\Http\Controllers\Api\Admin\StockAdjustmentController as AdminStockAdjustmentController;
+use App\Http\Controllers\Api\Admin\TaxRateController as AdminTaxRateController;
 use App\Http\Controllers\Api\AccountController;
 use App\Http\Controllers\Api\AccountDataController;
 use App\Http\Controllers\Api\AddressController;
+use App\Http\Controllers\Api\AlsoBoughtController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\BulkCartController;
 use App\Http\Controllers\Api\CartController;
@@ -25,18 +29,24 @@ use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\CompanyOrderController;
 use App\Http\Controllers\Api\GuestCartController;
 use App\Http\Controllers\Api\GuestOrderController;
+use App\Http\Controllers\Api\HomeFeedController;
 use App\Http\Controllers\Api\InvoiceController;
 use App\Http\Controllers\Api\NotificationController;
 use App\Http\Controllers\Api\OrderApprovalController;
 use App\Http\Controllers\Api\OrderController;
+use App\Http\Controllers\Api\OrderTrackingController;
+use App\Http\Controllers\Api\PaymentMethodController;
 use App\Http\Controllers\Api\PriceTierController;
 use App\Http\Controllers\Api\PricingController;
+use App\Http\Controllers\Api\ProductAnswerController;
 use App\Http\Controllers\Api\ProductController;
+use App\Http\Controllers\Api\ProductQuestionController;
 use App\Http\Controllers\Api\RelatedProductController;
 use App\Http\Controllers\Api\ReturnController;
 use App\Http\Controllers\Api\ReviewController;
 use App\Http\Controllers\Api\RfqController;
 use App\Http\Controllers\Api\SearchController;
+use App\Http\Controllers\Api\StockNotificationController;
 use App\Http\Controllers\Api\StripeWebhookController;
 use App\Http\Controllers\Api\WishlistController;
 use App\Support\ApiResponse;
@@ -75,8 +85,16 @@ Route::get('/categories', [CategoryController::class, 'index']);
 Route::get('/categories/{category:slug}/products', [CategoryController::class, 'products']);
 Route::get('/products/{product:slug}', [ProductController::class, 'show']);
 Route::get('/products/{product}/related', [RelatedProductController::class, 'index']);
+Route::get('/products/{product}/also-bought', [AlsoBoughtController::class, 'index']);
 Route::get('/products/{product:slug}/reviews', [ReviewController::class, 'index']);
+Route::get('/products/{product}/questions', [ProductQuestionController::class, 'index']);
 Route::get('/search', [SearchController::class, 'index']);
+Route::get('/search/facets', [SearchController::class, 'facets']);
+Route::get('/search/autocomplete', [SearchController::class, 'autocomplete']);
+
+// Curated/derived listings for the homepage - featured picks, best sellers,
+// new arrivals. See HomeFeedController.
+Route::get('/home-feed', [HomeFeedController::class, 'index']);
 
 // Pricing quotes work for guests too (just without an account override), so
 // this is intentionally not behind auth:sanctum.
@@ -86,6 +104,10 @@ Route::post('/pricing/quote', [PricingController::class, 'quote']);
 // quote above); a signed-in B2B buyer additionally sees their own
 // negotiated `your_price` for this variant - see PriceTierController.
 Route::get('/variants/{variant}/price-tiers', [PriceTierController::class, 'index']);
+
+// Guests can ask to be notified too - optional auth, the same pattern
+// PricingController already established.
+Route::post('/variants/{variant}/stock-notifications', [StockNotificationController::class, 'store']);
 
 // A guest checkout: identity is the X-Guest-Token header, not a Sanctum
 // token, so none of this needs auth:sanctum. See GuestCartController /
@@ -97,6 +119,12 @@ Route::patch('/guest/cart/items/{item}', [GuestCartController::class, 'updateIte
 Route::delete('/guest/cart/items/{item}', [GuestCartController::class, 'removeItem']);
 Route::post('/guest/orders', [GuestOrderController::class, 'store']);
 Route::get('/guest/orders/{order}', [GuestOrderController::class, 'show']);
+
+// General "track my order" lookup by id + email - unlike the guest-only
+// endpoint above, this also matches a signed-in customer's own order
+// against their account email, so it works regardless of how the order was
+// placed. See OrderTrackingController.
+Route::get('/track-order/{order}', [OrderTrackingController::class, 'show']);
 
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/user', function (Request $request) {
@@ -166,6 +194,16 @@ Route::middleware('auth:sanctum')->group(function () {
     // requires a signed-in, verified-purchase requester.
     Route::post('/products/{product:slug}/reviews', [ReviewController::class, 'store']);
 
+    // Product Q&A - unmoderated, unlike reviews (see ProductQuestionController).
+    Route::post('/products/{product}/questions', [ProductQuestionController::class, 'store']);
+    Route::post('/questions/{question}/answers', [ProductAnswerController::class, 'store']);
+
+    // Saved cards via Stripe - see PaymentService's Customer/SetupIntent
+    // methods and PaymentMethodController.
+    Route::get('/payment-methods', [PaymentMethodController::class, 'index']);
+    Route::post('/payment-methods', [PaymentMethodController::class, 'store']);
+    Route::delete('/payment-methods/{paymentMethodId}', [PaymentMethodController::class, 'destroy']);
+
     // A product a signed-in user has saved for later - see WishlistController.
     Route::get('/wishlist', [WishlistController::class, 'index']);
     Route::post('/wishlist/{product}', [WishlistController::class, 'toggle']);
@@ -222,6 +260,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/coupons/{coupon}', [AdminCouponController::class, 'update']);
         Route::delete('/coupons/{coupon}', [AdminCouponController::class, 'destroy']);
 
+        Route::get('/gift-cards', [AdminGiftCardController::class, 'index']);
+        Route::post('/gift-cards', [AdminGiftCardController::class, 'store']);
+        Route::patch('/gift-cards/{giftCard}', [AdminGiftCardController::class, 'update']);
+        Route::delete('/gift-cards/{giftCard}', [AdminGiftCardController::class, 'destroy']);
+
+        Route::get('/tax-rates', [AdminTaxRateController::class, 'index']);
+        Route::post('/tax-rates', [AdminTaxRateController::class, 'store']);
+        Route::patch('/tax-rates/{taxRate}', [AdminTaxRateController::class, 'update']);
+        Route::delete('/tax-rates/{taxRate}', [AdminTaxRateController::class, 'destroy']);
+
         Route::get('/reviews', [AdminReviewController::class, 'index']);
         Route::post('/reviews/{review}/approve', [AdminReviewController::class, 'approve']);
         Route::post('/reviews/{review}/reject', [AdminReviewController::class, 'reject']);
@@ -233,5 +281,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('/rfq', [AdminRfqController::class, 'index']);
         Route::post('/rfq/{rfq}/respond', [AdminRfqController::class, 'respond']);
+
+        Route::delete('/questions/{question}', [AdminProductQuestionController::class, 'destroyQuestion']);
+        Route::delete('/answers/{answer}', [AdminProductQuestionController::class, 'destroyAnswer']);
     });
 });

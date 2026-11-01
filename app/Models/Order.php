@@ -73,6 +73,11 @@ class Order extends Model
         'po_reference',
         'coupon_id',
         'discount_total',
+        'tax_total',
+        'gift_card_id',
+        'gift_card_amount',
+        'loyalty_points_redeemed',
+        'loyalty_points_earned',
     ];
 
     protected function casts(): array
@@ -80,6 +85,8 @@ class Order extends Model
         return [
             'total' => 'decimal:2',
             'discount_total' => 'decimal:2',
+            'tax_total' => 'decimal:2',
+            'gift_card_amount' => 'decimal:2',
         ];
     }
 
@@ -111,6 +118,11 @@ class Order extends Model
     public function coupon(): BelongsTo
     {
         return $this->belongsTo(Coupon::class);
+    }
+
+    public function giftCard(): BelongsTo
+    {
+        return $this->belongsTo(GiftCard::class);
     }
 
     public function returnRequests(): HasMany

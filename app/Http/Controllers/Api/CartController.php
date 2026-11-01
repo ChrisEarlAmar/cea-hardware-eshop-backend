@@ -42,6 +42,14 @@ class CartController extends Controller
             ]);
         }
 
+        // A cart that was already flagged as abandoned but just got fresh
+        // activity is no longer abandoned - clearing this lets a later
+        // round of inactivity earn its own reminder instead of being
+        // permanently skipped by the first one ever sent.
+        if ($cart->abandoned_reminder_sent_at !== null) {
+            $cart->update(['abandoned_reminder_sent_at' => null]);
+        }
+
         return ApiResponse::success($this->cartPayload($cart, $request->user()));
     }
 

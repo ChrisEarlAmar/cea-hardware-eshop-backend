@@ -76,6 +76,8 @@ class OrderController extends Controller
             'coupon_code' => ['nullable', 'string', 'max:64'],
             'customer_note' => ['nullable', 'string', 'max:1000'],
             'po_reference' => ['nullable', 'string', 'max:100'],
+            'gift_card_code' => ['nullable', 'string', 'max:64'],
+            'redeem_loyalty_points' => ['nullable', 'integer', 'min:1'],
         ]);
 
         try {
@@ -85,6 +87,8 @@ class OrderController extends Controller
                 'customer_note' => $validated['customer_note'] ?? null,
                 'po_reference' => $validated['po_reference'] ?? null,
                 'coupon_code' => $validated['coupon_code'] ?? null,
+                'gift_card_code' => $validated['gift_card_code'] ?? null,
+                'redeem_loyalty_points' => $validated['redeem_loyalty_points'] ?? null,
             ];
         } catch (InvalidArgumentException $e) {
             return ApiResponse::error('invalid_address', $e->getMessage(), 422);
@@ -311,6 +315,10 @@ class OrderController extends Controller
             'payment_status' => $order->payment_status,
             'total' => $order->total,
             'discount_total' => $order->discount_total,
+            'tax_total' => $order->tax_total,
+            'gift_card_amount' => $order->gift_card_amount,
+            'loyalty_points_redeemed' => $order->loyalty_points_redeemed,
+            'loyalty_points_earned' => $order->loyalty_points_earned,
             'po_reference' => $order->po_reference,
             'customer_note' => $order->customer_note,
             'tracking_carrier' => $order->tracking_carrier,

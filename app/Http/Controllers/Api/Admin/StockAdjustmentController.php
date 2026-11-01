@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\ProductVariant;
 use App\Models\StockAdjustment;
 use App\Services\AuditLogger;
+use App\Services\StockNotificationService;
 use App\Support\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -27,6 +28,7 @@ class StockAdjustmentController extends Controller
 {
     public function __construct(
         private readonly AuditLogger $auditLogger,
+        private readonly StockNotificationService $stockNotificationService,
     ) {
     }
 
@@ -48,6 +50,7 @@ class StockAdjustmentController extends Controller
         ]);
 
         $delta = (int) $validated['delta'];
+        $previousStock = $variant->stock;
 
         // stock + delta >= 0  <=>  stock >= -delta. For a positive delta
         // (restock) -delta is negative and the check always passes; for a
@@ -66,6 +69,8 @@ class StockAdjustmentController extends Controller
         }
 
         $variant->refresh();
+
+        $this->stockNotificationService->notifyIfBackInStock($variant, $previousStock);
 
         $adjustment = StockAdjustment::create([
             'product_variant_id' => $variant->id,

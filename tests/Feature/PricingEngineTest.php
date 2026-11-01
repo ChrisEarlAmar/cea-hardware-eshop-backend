@@ -136,13 +136,63 @@ class PricingEngineTest extends TestCase
         app(PricingEngine::class)->priceFor(null, $variant, 1);
     }
 
+    public function test_a_sale_discount_is_applied_on_top_of_the_matched_tier(): void
+    {
+        $variant = $this->variantWithTiers([[1, '10.00'], [50, '8.00']], saleDiscountPercent: '25.00');
+
+        $result = app(PricingEngine::class)->priceFor(null, $variant, 1);
+
+        $this->assertSame('7.50', $result['unit_price']);
+        $this->assertSame('sale_price', $result['source']);
+    }
+
+    public function test_an_expired_sale_no_longer_discounts_the_price(): void
+    {
+        $variant = $this->variantWithTiers(
+            [[1, '10.00']],
+            saleDiscountPercent: '50.00',
+            saleEndsAt: now()->subDay(),
+        );
+
+        $result = app(PricingEngine::class)->priceFor(null, $variant, 1);
+
+        $this->assertSame('10.00', $result['unit_price']);
+        $this->assertSame('base_price', $result['source']);
+    }
+
+    public function test_a_sale_never_discounts_an_accounts_own_negotiated_price(): void
+    {
+        $variant = $this->variantWithTiers([[1, '10.00']], saleDiscountPercent: '50.00');
+        $account = Account::create(['name' => 'Acme Co']);
+
+        AccountPrice::create([
+            'account_id' => $account->id,
+            'product_variant_id' => $variant->id,
+            'unit_price' => '9.00',
+        ]);
+
+        $result = app(PricingEngine::class)->priceFor($account, $variant, 1);
+
+        $this->assertSame('9.00', $result['unit_price']);
+        $this->assertSame('account_price', $result['source']);
+    }
+
     /**
      * @param  array<int, array{0: int, 1: string}>  $tiers
      */
-    private function variantWithTiers(array $tiers): ProductVariant
-    {
+    private function variantWithTiers(
+        array $tiers,
+        ?string $saleDiscountPercent = null,
+        ?\Illuminate\Support\Carbon $saleEndsAt = null,
+    ): ProductVariant {
         $category = Category::create(['name' => 'Bolts', 'slug' => 'bolts-'.uniqid()]);
-        $product = Product::create(['category_id' => $category->id, 'name' => 'Test Bolt', 'slug' => 'test-bolt-'.uniqid()]);
+        $product = Product::create([
+            'category_id' => $category->id,
+            'name' => 'Test Bolt',
+            'slug' => 'test-bolt-'.uniqid(),
+            'sale_discount_percent' => $saleDiscountPercent,
+            'sale_ends_at' => $saleEndsAt,
+        ]);
         $variant = ProductVariant::create(['product_id' => $product->id, 'sku' => 'SKU-'.uniqid(), 'stock' => 1000]);
 
         foreach ($tiers as [$minQuantity, $unitPrice]) {

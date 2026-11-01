@@ -22,6 +22,13 @@ class ProductSummaryResource extends JsonResource
             'starting_price' => $this->starting_price !== null
                 ? number_format((float) $this->starting_price, 2, '.', '')
                 : null,
+            'is_featured' => (bool) $this->is_featured,
+            // Only surfaced while the sale is actually live - see
+            // Product::isOnSale() - so a listing never shows a stale
+            // percentage for a sale that already lapsed.
+            'sale_discount_percent' => $this->isOnSale()
+                ? number_format((float) $this->sale_discount_percent, 2, '.', '')
+                : null,
         ];
     }
 }

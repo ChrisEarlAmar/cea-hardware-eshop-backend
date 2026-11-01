@@ -32,6 +32,7 @@ class User extends Authenticatable
         'locked_until',
         'spending_limit_cents',
         'deletion_requested_at',
+        'loyalty_points_balance',
     ];
 
     /**

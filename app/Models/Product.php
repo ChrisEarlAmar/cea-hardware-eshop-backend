@@ -15,11 +15,43 @@ class Product extends Model
         'slug',
         'description',
         'image_url',
+        'is_featured',
+        'sale_discount_percent',
+        'sale_ends_at',
     ];
+
+    protected function casts(): array
+    {
+        return [
+            'is_featured' => 'boolean',
+            'sale_discount_percent' => 'decimal:2',
+            'sale_ends_at' => 'datetime',
+        ];
+    }
 
     public function category(): BelongsTo
     {
         return $this->belongsTo(Category::class);
+    }
+
+    public function questions(): HasMany
+    {
+        return $this->hasMany(ProductQuestion::class)->latest();
+    }
+
+    /**
+     * True while sale_discount_percent is set and (if given an expiry)
+     * hasn't lapsed yet - the single check PricingEngine, product listings,
+     * and the "on sale" badge all share, so none of them can drift out of
+     * sync with each other.
+     */
+    public function isOnSale(): bool
+    {
+        if ($this->sale_discount_percent === null) {
+            return false;
+        }
+
+        return $this->sale_ends_at === null || $this->sale_ends_at->isFuture();
     }
 
     public function variants(): HasMany
@@ -65,6 +97,11 @@ class Product extends Model
             ->where('price_tiers.min_quantity', 1);
 
         return $query->addSelect(['starting_price' => $subquery]);
+    }
+
+    public function scopeFeatured(Builder $query): Builder
+    {
+        return $query->where('is_featured', true);
     }
 
     /**

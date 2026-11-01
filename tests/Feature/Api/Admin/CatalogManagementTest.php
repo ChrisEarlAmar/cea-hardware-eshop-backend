@@ -170,6 +170,57 @@ class CatalogManagementTest extends TestCase
         $this->assertSame('/images/hex-bolt.png', $product->fresh()->image_url);
     }
 
+    public function test_staff_can_set_merchandising_fields_via_update(): void
+    {
+        $staff = $this->staff();
+        $category = Category::create(['name' => 'Bolts', 'slug' => 'bolts']);
+        $product = Product::create(['category_id' => $category->id, 'name' => 'Hex Bolt', 'slug' => 'hex-bolt']);
+
+        $response = $this->actingAs($staff, 'sanctum')->patchJson("/api/admin/products/{$product->id}", [
+            'is_featured' => true,
+            'sale_discount_percent' => 25,
+            'sale_ends_at' => '2030-01-01T00:00:00Z',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonPath('data.is_featured', true)
+            ->assertJsonPath('data.sale_discount_percent', '25.00');
+
+        $fresh = $product->fresh();
+        $this->assertTrue($fresh->is_featured);
+        $this->assertSame('25.00', $fresh->sale_discount_percent);
+        $this->assertSame('2030-01-01', $fresh->sale_ends_at->format('Y-m-d'));
+    }
+
+    public function test_sale_discount_percent_must_be_within_zero_to_a_hundred(): void
+    {
+        $staff = $this->staff();
+        $category = Category::create(['name' => 'Bolts', 'slug' => 'bolts']);
+        $product = Product::create(['category_id' => $category->id, 'name' => 'Hex Bolt', 'slug' => 'hex-bolt']);
+
+        $response = $this->actingAs($staff, 'sanctum')->patchJson("/api/admin/products/{$product->id}", [
+            'sale_discount_percent' => 150,
+        ]);
+
+        $response->assertStatus(422)->assertJsonPath('error.code', 'validation_failed');
+    }
+
+    public function test_merchandising_fields_can_also_be_set_on_creation(): void
+    {
+        $staff = $this->staff();
+        $category = Category::create(['name' => 'Bolts', 'slug' => 'bolts']);
+
+        $response = $this->actingAs($staff, 'sanctum')->postJson('/api/admin/products', [
+            'category_id' => $category->id,
+            'name' => 'Carriage Bolt',
+            'is_featured' => true,
+            'sale_discount_percent' => 10,
+        ]);
+
+        $response->assertStatus(201)->assertJsonPath('data.is_featured', true);
+        $this->assertDatabaseHas('products', ['name' => 'Carriage Bolt', 'is_featured' => true]);
+    }
+
     public function test_staff_can_view_a_single_product_with_its_variants_and_price_tiers(): void
     {
         $staff = $this->staff();

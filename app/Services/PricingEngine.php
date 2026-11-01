@@ -17,11 +17,13 @@ class PricingEngine
      * answer everywhere.
      *
      * Precedence (highest wins outright - never stacked with anything else):
-     *   1. An account-specific price for this variant, if one exists.
+     *   1. An account-specific price for this variant, if one exists - a
+     *      negotiated rate is never further discounted by a public sale.
      *   2. Otherwise, the highest-quantity price tier whose min_quantity is
      *      less than or equal to the requested quantity ("cliff" pricing:
      *      the matched tier's price applies to every unit in the line, not
-     *      just the units above its threshold).
+     *      just the units above its threshold) - reduced by the product's
+     *      sale_discount_percent if it's currently on sale.
      *
      * @return array{unit_price: string, quantity: int, line_total: string, source: string}
      */
@@ -50,9 +52,25 @@ class PricingEngine
             throw new RuntimeException("No price tier configured for variant [{$variant->id}].");
         }
 
+        $product = $variant->relationLoaded('product') ? $variant->product : $variant->product()->first();
+
+        if ($product !== null && $product->isOnSale()) {
+            $saleUnitPrice = $this->applyDiscount($tier->unit_price, (string) $product->sale_discount_percent);
+
+            return $this->buildResult($saleUnitPrice, $quantity, 'sale_price');
+        }
+
         $source = $tier->min_quantity === 1 ? 'base_price' : 'quantity_tier';
 
         return $this->buildResult($tier->unit_price, $quantity, $source);
+    }
+
+    private function applyDiscount(string $unitPrice, string $discountPercent): string
+    {
+        $unitPriceCents = $this->toCents($unitPrice);
+        $discountedCents = (int) round($unitPriceCents * (1 - ((float) $discountPercent / 100)));
+
+        return $this->toDecimalString(max(0, $discountedCents));
     }
 
     private function buildResult(string $unitPrice, int $quantity, string $source): array

@@ -15,6 +15,12 @@ class ProductResource extends JsonResource
             'slug' => $this->slug,
             'description' => $this->description,
             'image_url' => $this->image_url,
+            // Only surfaced while the sale is actually live - see
+            // Product::isOnSale() - so the product page never shows a
+            // stale percentage for a sale that already lapsed.
+            'sale_discount_percent' => $this->isOnSale()
+                ? number_format((float) $this->sale_discount_percent, 2, '.', '')
+                : null,
             'images' => $this->images->map(fn ($image) => [
                 'url' => $image->url,
                 'alt' => $image->alt,
