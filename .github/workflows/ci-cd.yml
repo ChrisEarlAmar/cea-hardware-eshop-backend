@@ -1,0 +1,59 @@
+name: Backend CI/CD
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo_sqlite
+          coverage: none
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: composer validate --strict
+      - run: composer install --no-interaction --prefer-dist
+      - run: php artisan test
+      - run: npm ci
+      - run: npm run build
+      - run: docker build --tag cea-hardware-eshop-api:test .
+        env:
+          DOCKER_BUILDKIT: 1
+
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      - name: Deploy backend
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_ROOT: ${{ vars.DEPLOY_ROOT }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$DEPLOY_USER@$DEPLOY_HOST" "set -eu; git -C '$DEPLOY_ROOT/cea-hardware-eshop-backend' pull --ff-only; cd '$DEPLOY_ROOT/cea-hardware-eshop-backend/deploy'; docker compose up -d --build migrate api queue gateway"
