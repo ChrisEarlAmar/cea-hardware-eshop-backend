@@ -29,7 +29,8 @@ COPY --from=vendor --chown=www-data:www-data /app/vendor ./vendor
 COPY --from=assets --chown=www-data:www-data /app/public/build ./public/build
 COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint
 
-RUN chmod +x /usr/local/bin/docker-entrypoint \
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint \
+    && chmod +x /usr/local/bin/docker-entrypoint \
     && mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
     && chown -R www-data:www-data storage bootstrap/cache \
     && php artisan package:discover --ansi

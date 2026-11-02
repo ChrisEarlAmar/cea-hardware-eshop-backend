@@ -14,13 +14,7 @@ docker compose run --rm api php artisan key:generate --show
 docker compose up --build
 ```
 
-Open `http://localhost` and `http://localhost/health`. The latter confirms that Next.js can reach Laravel. Do not run `db:seed` against an existing database: the seed data is intended only for a new demo database.
-
-For a fresh demonstration database, after the stack is up, run:
-
-```sh
-docker compose exec api php artisan db:seed
-```
+Open `http://localhost` and `http://localhost/health`. The latter confirms that Next.js can reach Laravel. With the default `SEED_DEMO_DATA=true`, the first migration on a fresh named volume automatically adds the portfolio catalog and demo accounts, then writes a completion marker in persistent Laravel storage. Set distinct `DEMO_USER_PASSWORD` and `DEMO_STAFF_PASSWORD` values before this first startup; they are required because the production image excludes development-only Faker. Later `docker compose up` runs only migrations. Set `SEED_DEMO_DATA=false` before the first startup if you need a blank database. Do not manually run `db:seed` against an existing database.
 
 MySQL data and Laravel public storage use named volumes. `docker compose down` preserves them; `docker compose down --volumes` deletes them.
 
@@ -34,7 +28,7 @@ For the first-week portfolio deployment, use exactly one x86 EC2 instance, one 3
 
 1. Create the Free account plan only after the gate above is satisfied. Use an Amazon Linux 2023 x86 instance such as `t3.micro`, 30 GB gp3 storage, and the smallest region that the console confirms fits the plan. Restrict SSH (22) to your current IP; expose only HTTP (80) initially.
 2. Install Docker and the Compose plugin on the instance. Clone both repositories into `/opt/cea-hardware-eshop` so their folder names remain `cea-hardware-eshop-next` and `cea-hardware-eshop-backend`.
-3. Create `cea-hardware-eshop-backend/deploy/.env` from this directory's example, with strong distinct database passwords, a generated `APP_KEY`, real Stripe values only if payment is being tested, and `APP_URL`/`FRONTEND_URL` set to the public IP.
+3. Create `cea-hardware-eshop-backend/deploy/.env` from this directory's example, with strong distinct database passwords, a generated `APP_KEY`, real Stripe values only if payment is being tested, and `APP_URL`/`FRONTEND_URL` set to the public IP. Leave `SEED_DEMO_DATA=true` for this one-time portfolio setup and set unique `DEMO_USER_PASSWORD` and `DEMO_STAFF_PASSWORD` values; set `SEED_DEMO_DATA=false` first if the database must begin empty.
 4. Run `docker compose up -d --build` from this directory, then check `docker compose ps`, `docker compose logs --tail=100`, and the `/health` page.
 5. Do not put the database on the public network. Back up the named MySQL volume before experiments that can alter data.
 

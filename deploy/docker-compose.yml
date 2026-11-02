@@ -29,7 +29,15 @@ services:
 
   migrate:
     <<: *api-runtime
-    command: php artisan migrate --force
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        php artisan migrate --force
+        if [ "${SEED_DEMO_DATA:-false}" = "true" ] && [ ! -f storage/.initial-seed-complete ]; then
+          php artisan db:seed --force
+          touch storage/.initial-seed-complete
+        fi
     restart: "no"
     depends_on:
       db:
